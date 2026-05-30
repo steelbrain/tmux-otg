@@ -39,8 +39,7 @@ pub fn is_allowed_session(name: &str) -> bool {
     }
     // Checking the whole name (not just the suffix) is fine: every character in
     // ALLOWED_PREFIX is itself alphanumeric or `-`.
-    name.bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Filters an iterator of raw session names down to those that are allowed,
@@ -134,11 +133,7 @@ mod tests {
         let got = filter_allowed(input);
         assert_eq!(
             got,
-            vec![
-                "public-insecure-one",
-                "public-insecure-two",
-                "public-insecure-three",
-            ]
+            vec!["public-insecure-one", "public-insecure-two", "public-insecure-three",]
         );
     }
 

@@ -59,10 +59,7 @@ pub fn list_allowed_sessions() -> Result<Vec<String>, TmuxError> {
         if stderr.contains("no server running") || stderr.contains("no sessions") {
             return Ok(Vec::new());
         }
-        return Err(TmuxError::Command {
-            code: output.status.code(),
-            stderr: stderr.into_owned(),
-        });
+        return Err(TmuxError::Command { code: output.status.code(), stderr: stderr.into_owned() });
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -118,14 +115,8 @@ mod tests {
 
     #[test]
     fn error_display_is_readable() {
-        let e = TmuxError::Command {
-            code: Some(1),
-            stderr: "  can't find session  ".to_string(),
-        };
-        assert_eq!(
-            e.to_string(),
-            "tmux exited with status 1: can't find session"
-        );
+        let e = TmuxError::Command { code: Some(1), stderr: "  can't find session  ".to_string() };
+        assert_eq!(e.to_string(), "tmux exited with status 1: can't find session");
 
         let e = TmuxError::Rejected("nope".to_string());
         assert_eq!(e.to_string(), "session name not allowed: nope");

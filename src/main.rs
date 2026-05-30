@@ -33,7 +33,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // surfacing it on the first request.
     if let Err(err) = Command::new("tmux").arg("-V").output() {
         return Err(
-            format!("could not execute `tmux` (is it installed and on PATH?): {err}").into(),
+            format!("could not execute `tmux` (is it installed and on PATH?): {err}").into()
         );
     }
 

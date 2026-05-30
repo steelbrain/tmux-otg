@@ -76,13 +76,7 @@ impl Hub {
         let epoch = self.next_epoch.fetch_add(1, Ordering::Relaxed);
         let (tx, _seed) = watch::channel(PaneUpdate::Pending);
         let rx = tx.subscribe();
-        sessions.insert(
-            session.to_string(),
-            Session {
-                epoch,
-                tx: tx.clone(),
-            },
-        );
+        sessions.insert(session.to_string(), Session { epoch, tx: tx.clone() });
         tokio::spawn(Arc::clone(self).run_capturer(session.to_string(), tx, epoch));
         rx
     }
@@ -185,9 +179,7 @@ impl Hub {
 /// JSON-encodes `text` into a single line so embedded newlines cannot break SSE
 /// framing; the client `JSON.parse`s it back into the original multi-line text.
 fn encode(text: &str) -> Arc<str> {
-    serde_json::to_string(text)
-        .unwrap_or_else(|_| String::from("\"\""))
-        .into()
+    serde_json::to_string(text).unwrap_or_else(|_| String::from("\"\"")).into()
 }
 
 #[cfg(test)]

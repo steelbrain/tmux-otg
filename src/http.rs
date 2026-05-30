@@ -48,18 +48,9 @@ pub fn router(hub: SharedHub) -> Router {
 async fn security_headers(req: Request, next: Next) -> Response {
     let mut res = next.run(req).await;
     let headers = res.headers_mut();
-    headers.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(CSP),
-    );
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
-    headers.insert(
-        header::REFERRER_POLICY,
-        HeaderValue::from_static("no-referrer"),
-    );
+    headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(CSP));
+    headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
     res
 }
 
@@ -128,9 +119,7 @@ async fn stream(State(hub): State<SharedHub>, Path(name): Path<String>) -> Respo
         }
     };
 
-    Sse::new(body)
-        .keep_alive(KeepAlive::default())
-        .into_response()
+    Sse::new(body).keep_alive(KeepAlive::default()).into_response()
 }
 
 /// Runs the blocking `list_allowed_sessions` on the blocking pool.
@@ -155,11 +144,7 @@ fn not_found() -> Response {
 }
 
 fn internal_error(detail: &str) -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Html(render_error("500 — error", detail)),
-    )
-        .into_response()
+    (StatusCode::INTERNAL_SERVER_ERROR, Html(render_error("500 — error", detail))).into_response()
 }
 
 // --- Templates -------------------------------------------------------------
@@ -286,15 +271,9 @@ mod tests {
 
     #[test]
     fn escape_html_neutralizes_markup() {
-        assert_eq!(
-            escape_html("<script>&\"'"),
-            "&lt;script&gt;&amp;&quot;&#x27;"
-        );
+        assert_eq!(escape_html("<script>&\"'"), "&lt;script&gt;&amp;&quot;&#x27;");
         // allowlisted session characters are passed through untouched
-        assert_eq!(
-            escape_html("public-insecure-demo_1"),
-            "public-insecure-demo_1"
-        );
+        assert_eq!(escape_html("public-insecure-demo_1"), "public-insecure-demo_1");
     }
 
     #[test]
@@ -333,46 +312,32 @@ mod tests {
         }
 
         async fn get(uri: &str) -> Response {
-            app()
-                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
-                .await
-                .unwrap()
+            app().oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap()).await.unwrap()
         }
 
         #[tokio::test]
         async fn healthz_returns_ok() {
             let res = get("/healthz").await;
             assert_eq!(res.status(), StatusCode::OK);
-            let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
-                .await
-                .unwrap();
+            let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
             assert_eq!(&bytes[..], b"ok\n");
         }
 
         #[tokio::test]
         async fn view_rejects_non_allowlisted_name() {
-            assert_eq!(
-                get("/view/private-session").await.status(),
-                StatusCode::NOT_FOUND
-            );
+            assert_eq!(get("/view/private-session").await.status(), StatusCode::NOT_FOUND);
         }
 
         #[tokio::test]
         async fn view_accepts_allowlisted_name() {
-            assert_eq!(
-                get("/view/public-insecure-demo").await.status(),
-                StatusCode::OK
-            );
+            assert_eq!(get("/view/public-insecure-demo").await.status(), StatusCode::OK);
         }
 
         #[tokio::test]
         async fn stream_rejects_non_allowlisted_name() {
             // The allowlist gate runs before any capturer is started, so this
             // is safe to assert without tmux.
-            assert_eq!(
-                get("/stream/not-allowed").await.status(),
-                StatusCode::NOT_FOUND
-            );
+            assert_eq!(get("/stream/not-allowed").await.status(), StatusCode::NOT_FOUND);
         }
 
         #[tokio::test]
@@ -384,14 +349,8 @@ mod tests {
         async fn responses_carry_security_headers() {
             let res = get("/healthz").await;
             let headers = res.headers();
-            assert!(
-                headers.contains_key(header::CONTENT_SECURITY_POLICY),
-                "CSP header present"
-            );
-            assert_eq!(
-                headers.get(header::X_CONTENT_TYPE_OPTIONS).unwrap(),
-                "nosniff"
-            );
+            assert!(headers.contains_key(header::CONTENT_SECURITY_POLICY), "CSP header present");
+            assert_eq!(headers.get(header::X_CONTENT_TYPE_OPTIONS).unwrap(), "nosniff");
             assert_eq!(headers.get(header::REFERRER_POLICY).unwrap(), "no-referrer");
         }
     }

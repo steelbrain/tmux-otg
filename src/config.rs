@@ -67,10 +67,7 @@ mod tests {
         assert_eq!(cfg.port, 8080);
         assert_eq!(cfg.interval_secs, 2);
         assert_eq!(cfg.scrollback, 0);
-        assert_eq!(
-            cfg.socket_addr(),
-            SocketAddr::from((Ipv4Addr::LOCALHOST, 8080))
-        );
+        assert_eq!(cfg.socket_addr(), SocketAddr::from((Ipv4Addr::LOCALHOST, 8080)));
     }
 
     #[test]

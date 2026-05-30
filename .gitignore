@@ -1,1 +1,7 @@
 /target
+/dist
+*.swp
+*.swo
+*~
+.DS_Store
+.env
