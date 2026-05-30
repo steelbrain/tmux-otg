@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x86_64-darwin
+            target: x86_64-apple-darwin
+            runner: macos-latest
+          - platform: aarch64-darwin
+            target: aarch64-apple-darwin
+            runner: macos-latest
+          - platform: x86_64-linux
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - platform: aarch64-linux
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          stem="tmux-otg-${{ matrix.platform }}"
+          staging="dist/${stem}"
+          mkdir -p "${staging}"
+          cp "target/${{ matrix.target }}/release/tmux-otg" "${staging}/"
+          cp LICENSE README.md "${staging}/"
+          tar -czf "dist/${stem}.tar.gz" -C dist "${stem}"
+          (cd dist && shasum -a 256 "${stem}.tar.gz" > "${stem}.tar.gz.sha256")
+          rm -rf "${staging}"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: tmux-otg-${{ matrix.platform }}
+          path: |
+            dist/tmux-otg-${{ matrix.platform }}.tar.gz
+            dist/tmux-otg-${{ matrix.platform }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all archives
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: tmux-otg-*
+          merge-multiple: true
+
+      - name: Aggregate checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          cat *.sha256 > SHA256SUMS
+          rm *.sha256
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/tmux-otg-*.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true
+          fail_on_unmatched_files: true
