@@ -83,7 +83,7 @@ All options can be set via a CLI flag or its environment-variable equivalent. CL
 
 | Flag | Env var | Default | Accepted values |
 |------|---------|---------|-----------------|
-| `--host <IP>` | `TMUX_OTG_HOST` | `127.0.0.1` | any IP address |
+| `--host <IP>` | `TMUX_OTG_HOST` | `127.0.0.1` | any IP address (e.g. `0.0.0.0` to listen on all interfaces) |
 | `--port <PORT>` | `TMUX_OTG_PORT` | `8080` | any valid TCP port (`0`–`65535`) |
 | `--interval-secs <N>` | `TMUX_OTG_INTERVAL` | `2` | `1`–`3600` (seconds between pane refreshes) |
 | `--scrollback <N>` | `TMUX_OTG_SCROLLBACK` | `0` | `0`–`100000` (extra history lines above the visible pane; `0` = visible pane only) |
@@ -138,7 +138,7 @@ The only tmux operations it can ever perform are `tmux list-sessions` and `tmux 
 
 - By default the server binds to **`127.0.0.1`** (localhost), so it is reachable only from the local machine.
 - **There is no authentication.** None. Anything the server is bound to is readable by anyone who can reach that address.
-- If you set `--host` to a non-localhost address (for example, your Tailscale IP), then **anyone who can reach that address can read every `public-insecure-*` session**, with no login or token. The server prints a loud warning at startup whenever it binds to a non-loopback address.
+- If you set `--host` to a non-localhost address — `0.0.0.0` to listen on **all** network interfaces, or a specific address such as your Tailscale IP — then **anyone who can reach that address can read every `public-insecure-*` session**, with no login or token. The server prints a loud warning at startup whenever it binds to a non-loopback address.
 
 Treat the contents of any `public-insecure-*` session as public to everyone on the network you bind to. As defense in depth, every response also carries a restrictive `Content-Security-Policy` (no external resources, no framing) along with `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`.
 
