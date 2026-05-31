@@ -171,4 +171,14 @@ mod tests {
         let e = TmuxError::Rejected("nope".to_string());
         assert_eq!(e.to_string(), "session name not allowed: nope");
     }
+
+    #[test]
+    fn error_display_covers_signal_and_task() {
+        // A signal-terminated tmux has no exit code and renders as "signal".
+        let e = TmuxError::Command { code: None, stderr: "  killed  ".to_string() };
+        assert_eq!(e.to_string(), "tmux exited with status signal: killed");
+
+        let e = TmuxError::Task("join panicked".to_string());
+        assert_eq!(e.to_string(), "tmux task failed: join panicked");
+    }
 }

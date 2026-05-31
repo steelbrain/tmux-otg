@@ -93,4 +93,26 @@ mod tests {
     fn rejects_interval_below_minimum() {
         assert!(Config::try_parse_from(["tmux-otg", "--interval-secs", "0"]).is_err());
     }
+
+    #[test]
+    fn accepts_interval_at_range_bounds() {
+        assert!(Config::try_parse_from(["tmux-otg", "--interval-secs", "1"]).is_ok());
+        assert!(Config::try_parse_from(["tmux-otg", "--interval-secs", "3600"]).is_ok());
+    }
+
+    #[test]
+    fn rejects_interval_above_maximum() {
+        assert!(Config::try_parse_from(["tmux-otg", "--interval-secs", "3601"]).is_err());
+    }
+
+    #[test]
+    fn accepts_scrollback_at_range_bounds() {
+        assert!(Config::try_parse_from(["tmux-otg", "--scrollback", "0"]).is_ok());
+        assert!(Config::try_parse_from(["tmux-otg", "--scrollback", "100000"]).is_ok());
+    }
+
+    #[test]
+    fn rejects_scrollback_above_maximum() {
+        assert!(Config::try_parse_from(["tmux-otg", "--scrollback", "100001"]).is_err());
+    }
 }

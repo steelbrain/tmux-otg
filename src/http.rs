@@ -377,9 +377,37 @@ mod tests {
         async fn responses_carry_security_headers() {
             let res = get("/healthz").await;
             let headers = res.headers();
-            assert!(headers.contains_key(header::CONTENT_SECURITY_POLICY), "CSP header present");
+            // Pin the exact CSP value, not just its presence: invariant #8 in
+            // AGENTS.md depends on these specific directives (no external
+            // resources, same-origin SSE only, no framing). A regression that
+            // widened `default-src` or dropped `frame-ancestors 'none'` would
+            // slip past a presence-only check.
+            assert_eq!(headers.get(header::CONTENT_SECURITY_POLICY).unwrap(), CSP);
+            assert!(CSP.contains("default-src 'none'"));
+            assert!(CSP.contains("connect-src 'self'"));
+            assert!(CSP.contains("frame-ancestors 'none'"));
             assert_eq!(headers.get(header::X_CONTENT_TYPE_OPTIONS).unwrap(), "nosniff");
             assert_eq!(headers.get(header::REFERRER_POLICY).unwrap(), "no-referrer");
+        }
+
+        #[tokio::test]
+        async fn edge_rejects_prefixed_names_with_target_or_injection_chars() {
+            // A name can carry the allowlisted prefix yet still smuggle a tmux
+            // target separator (`:` / `.`). Both /view and /stream must reject
+            // these at the HTTP edge — before any capturer or tmux process —
+            // so the security model does not rest on validation.rs alone.
+            for path in [
+                "/view/public-insecure-a:1",
+                "/view/public-insecure-a.0",
+                "/stream/public-insecure-a:1",
+                "/stream/public-insecure-a.0",
+            ] {
+                assert_eq!(
+                    get(path).await.status(),
+                    StatusCode::NOT_FOUND,
+                    "{path} must be rejected at the edge",
+                );
+            }
         }
     }
 }

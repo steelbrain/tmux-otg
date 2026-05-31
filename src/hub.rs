@@ -196,6 +196,20 @@ mod tests {
         assert_eq!(back, "line one\nline two");
     }
 
+    #[test]
+    fn encode_escapes_quotes_backslashes_and_control_chars() {
+        // Real pane output routinely carries quotes, backslashes, carriage
+        // returns, ANSI escape sequences, and NUL. Every one must be escaped
+        // into a single JSON line so it cannot break out of the SSE `data:`
+        // field or the inline <script>, while still round-tripping exactly.
+        let raw = "say \"hi\"\r\n\tpath C:\\x \u{1b}[0m\u{0}end";
+        let got = encode(raw);
+        assert!(!got.contains('\n'));
+        assert!(!got.contains('\r'));
+        let back: String = serde_json::from_str(&got).unwrap();
+        assert_eq!(back, raw);
+    }
+
     #[tokio::test]
     async fn second_subscriber_shares_one_capturer() {
         // Uses a session name that is allowlisted but (almost certainly) does
@@ -205,5 +219,36 @@ mod tests {
         let _rx1 = hub.subscribe("public-insecure-shared-capturer-test");
         let _rx2 = hub.subscribe("public-insecure-shared-capturer-test");
         assert_eq!(hub.active_count(), 1, "both subscribers share one capturer");
+    }
+
+    #[tokio::test]
+    async fn capturer_emits_gone_and_removes_entry_on_failure() {
+        // Allowlisted but (almost certainly) nonexistent; the unique nonce
+        // avoids colliding with any real session, which would make `capture`
+        // *succeed* and hang this test. The first capture therefore fails (no
+        // such session, or tmux not installed) and the capturer must publish a
+        // terminal `Gone` — not silently close the channel — then remove its
+        // own registry entry so subscribers are never stranded.
+        let hub = Arc::new(Hub::new(Duration::from_millis(50), 0));
+        let mut rx = hub.subscribe("public-insecure-hub-gone-probe-9d3f7a1c");
+
+        // Bound the wait so a mistaken collision fails fast instead of hanging.
+        tokio::time::timeout(Duration::from_secs(5), rx.changed())
+            .await
+            .expect("capturer should publish a terminal update promptly")
+            .expect("watch channel should still be open for the Gone update");
+        assert!(matches!(*rx.borrow(), PaneUpdate::Gone(_)));
+
+        // The terminal state removes the entry; give the capturer task a moment
+        // to run to completion after it sent `Gone`.
+        let mut cleaned = false;
+        for _ in 0..200 {
+            if hub.active_count() == 0 {
+                cleaned = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(cleaned, "capturer removes its registry entry on a terminal state");
     }
 }
