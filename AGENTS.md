@@ -46,6 +46,8 @@ When in doubt: prefer rejecting input over accepting it, and add a unit test tha
 
 ## Conventions
 
+**Testing.** Any new Rust behavior — or any change to existing behavior — must ship with tests in the same change. Add or update the unit/handler tests that pin the behavior so it cannot silently regress; this applies to all code, not only the security-critical logic called out above. If something genuinely cannot be tested, note why in the commit rather than skip coverage silently.
+
 **Branching.** This project commits directly to `main` — do not create feature sub-branches or open PRs unless explicitly asked.
 
 **Commit messages.** Present-tense imperative mood ("Add", not "Added"/"Adds"), first line ≤ 72 characters, with an emoji prefix:
