@@ -26,11 +26,18 @@ use crate::validation;
 pub type SharedHub = Arc<Hub>;
 
 /// Restrictive Content-Security-Policy for the tiny self-contained UI: no
-/// external resources at all, inline `<style>`/`<script>` only, same-origin
-/// connections (for the SSE stream), and no framing (anti-clickjacking).
-const CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; \
+/// external resources at all, inline `<style>`/`<script>` only, the favicon and
+/// other images from our own origin (`img-src 'self'`), same-origin connections
+/// (for the SSE stream), and no framing (anti-clickjacking).
+const CSP: &str = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; \
      script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; \
      form-action 'none'; frame-ancestors 'none'";
+
+/// The favicon and iOS home-screen icon, embedded at compile time so the server
+/// stays a single self-contained binary with no asset files to ship. Both are
+/// served same-origin (hence `img-src 'self'` in [`CSP`]).
+const FAVICON_PNG: &[u8] = include_bytes!("../assets/favicon.png");
+const APPLE_TOUCH_ICON_PNG: &[u8] = include_bytes!("../assets/apple-touch-icon.png");
 
 /// Builds the application router with all routes wired to `hub`.
 pub fn router(hub: SharedHub) -> Router {
@@ -39,6 +46,8 @@ pub fn router(hub: SharedHub) -> Router {
         .route("/view/{name}", get(view))
         .route("/stream/{name}", get(stream))
         .route("/healthz", get(health))
+        .route("/favicon.png", get(favicon))
+        .route("/apple-touch-icon.png", get(apple_touch_icon))
         .fallback(fallback)
         .layer(middleware::from_fn(security_headers))
         .with_state(hub)
@@ -56,6 +65,28 @@ async fn security_headers(req: Request, next: Next) -> Response {
 
 async fn health() -> &'static str {
     "ok\n"
+}
+
+/// Serves the browser-tab favicon (a small PNG embedded in the binary).
+async fn favicon() -> Response {
+    png_response(FAVICON_PNG)
+}
+
+/// Serves the iOS "add to home screen" icon — handy since the whole point is
+/// glancing at sessions from a phone.
+async fn apple_touch_icon() -> Response {
+    png_response(APPLE_TOUCH_ICON_PNG)
+}
+
+/// Builds a response for an embedded PNG, overriding the default
+/// `application/octet-stream` content type and adding a day-long cache hint so
+/// browsers don't refetch the icon on every page load.
+fn png_response(bytes: &'static [u8]) -> Response {
+    let mut res = bytes.into_response();
+    let headers = res.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=86400"));
+    res
 }
 
 async fn fallback() -> Response {
@@ -176,6 +207,8 @@ fn page(title: &str, body: &str) -> String {
          <meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <title>{title}</title>\n\
+         <link rel=\"icon\" type=\"image/png\" href=\"/favicon.png\">\n\
+         <link rel=\"apple-touch-icon\" href=\"/apple-touch-icon.png\">\n\
          <style>{STYLE}</style>\n\
          </head>\n\
          <body>\n{body}\n</body>\n</html>\n",
@@ -301,6 +334,15 @@ mod tests {
     }
 
     #[test]
+    fn pages_link_the_favicon_and_touch_icon() {
+        // Every page goes through `page()`, so checking one is enough to pin the
+        // icon links into the shared <head>.
+        let html = render_index(&[]);
+        assert!(html.contains(r#"<link rel="icon" type="image/png" href="/favicon.png">"#));
+        assert!(html.contains(r#"<link rel="apple-touch-icon" href="/apple-touch-icon.png">"#));
+    }
+
+    #[test]
     fn view_embeds_the_stream_url_as_json() {
         let html = render_view("public-insecure-demo");
         assert!(html.contains(r#"const url = "/stream/public-insecure-demo""#));
@@ -386,6 +428,9 @@ mod tests {
             assert!(CSP.contains("default-src 'none'"));
             assert!(CSP.contains("connect-src 'self'"));
             assert!(CSP.contains("frame-ancestors 'none'"));
+            // The favicon is served from our own origin, so images are confined
+            // to `'self'` — never widened to external hosts or `data:`.
+            assert!(CSP.contains("img-src 'self'"));
             assert_eq!(headers.get(header::X_CONTENT_TYPE_OPTIONS).unwrap(), "nosniff");
             assert_eq!(headers.get(header::REFERRER_POLICY).unwrap(), "no-referrer");
         }
@@ -408,6 +453,28 @@ mod tests {
                     "{path} must be rejected at the edge",
                 );
             }
+        }
+
+        #[tokio::test]
+        async fn favicon_is_served_as_a_png() {
+            let res = get("/favicon.png").await;
+            assert_eq!(res.status(), StatusCode::OK);
+            assert_eq!(res.headers().get(header::CONTENT_TYPE).unwrap(), "image/png");
+            // A cache hint so browsers don't refetch the icon on every page load.
+            assert_eq!(res.headers().get(header::CACHE_CONTROL).unwrap(), "public, max-age=86400");
+            let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            // PNG magic number — proves we served real image bytes and that the
+            // content type was overridden from the default octet-stream.
+            assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+        }
+
+        #[tokio::test]
+        async fn apple_touch_icon_is_served_as_a_png() {
+            let res = get("/apple-touch-icon.png").await;
+            assert_eq!(res.status(), StatusCode::OK);
+            assert_eq!(res.headers().get(header::CONTENT_TYPE).unwrap(), "image/png");
+            let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
         }
     }
 }

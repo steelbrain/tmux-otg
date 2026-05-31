@@ -1,6 +1,8 @@
-# tmux-otg
+<p align="center">
+  <img src="assets/logo.png" alt="tmux-otg" width="440">
+</p>
 
-Watch your tmux sessions live from a browser — strictly read-only, over Server-Sent Events.
+<p align="center"><em>Watch your tmux sessions live from a browser — strictly read-only, over Server-Sent Events.</em></p>
 
 `tmux-otg` ("tmux on the go") is a tiny HTTP server, built on [axum](https://github.com/tokio-rs/axum) and [tokio](https://tokio.rs/), that live-tails selected tmux sessions to a browser. It serves a minimal UI listing your allowlisted sessions and streams each one's active pane over Server-Sent Events (SSE) on a fixed interval — handy for glancing at a long-running build, server log, or training run from another device on your localhost or [Tailscale](https://tailscale.com/) tailnet, with nothing to install on the client. Multiple viewers of one session share a single capture loop, so the number of `tmux` processes scales with the distinct sessions being watched, not the number of open browsers. It is **strictly a viewer** — the only tmux operations it can ever perform are `list-sessions` and `capture-pane` — and it only ever exposes sessions named `public-insecure-*`. It binds to localhost with no authentication; **read the [Security model](#security-model) before exposing it anywhere else.**
 
