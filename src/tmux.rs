@@ -43,6 +43,28 @@ impl std::fmt::Display for TmuxError {
 
 impl std::error::Error for TmuxError {}
 
+/// Recognizes the benign "there is no server to talk to / nothing to list"
+/// stderr from `tmux list-sessions`, as opposed to a real failure.
+///
+/// tmux phrases this several ways depending on platform and version:
+/// * `no server running on <socket>` — the server was never started (common
+///   on Linux and when tmux has its own default socket).
+/// * `error connecting to <socket> (No such file or directory)` — the socket
+///   file is absent (common on macOS), or `(Connection refused)` for a stale
+///   socket left behind by a server that has since exited.
+/// * `no sessions` — the server is up but empty (older tmux).
+///
+/// For this read-only viewer every one of these is the normal "nothing to
+/// show yet" state, so `list_allowed_sessions` maps them to an empty list
+/// rather than surfacing an HTTP 500. The match is case-insensitive so it does
+/// not hinge on tmux's exact capitalization.
+fn is_idle_server_stderr(stderr: &str) -> bool {
+    let s = stderr.to_ascii_lowercase();
+    s.contains("no server running")
+        || s.contains("no sessions")
+        || s.contains("error connecting to")
+}
+
 /// Lists the names of all tmux sessions that are allowed to be exposed.
 ///
 /// If no tmux server is running, this returns an empty list rather than an
@@ -55,8 +77,8 @@ pub fn list_allowed_sessions() -> Result<Vec<String>, TmuxError> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // "no server running" is the normal idle state, not an error for us.
-        if stderr.contains("no server running") || stderr.contains("no sessions") {
+        // No server / no sessions is the normal idle state, not an error for us.
+        if is_idle_server_stderr(&stderr) {
             return Ok(Vec::new());
         }
         return Err(TmuxError::Command { code: output.status.code(), stderr: stderr.into_owned() });
@@ -111,6 +133,34 @@ mod tests {
 
         let err = capture_pane("public-insecure-a;rm -rf /", 0).unwrap_err();
         assert!(matches!(err, TmuxError::Rejected(_)));
+    }
+
+    #[test]
+    fn idle_stderr_covers_the_no_server_family() {
+        // macOS / tmux with a missing socket (verified against tmux 3.6b):
+        // this message contains neither "no server running" nor "no sessions",
+        // so it must still be recognized as the idle state, not an HTTP 500.
+        assert!(is_idle_server_stderr(
+            "error connecting to /private/tmp/tmux-501/default (No such file or directory)"
+        ));
+        // Linux / default-socket phrasing.
+        assert!(is_idle_server_stderr("no server running on /tmp/tmux-1000/default"));
+        // Stale socket left by a dead server.
+        assert!(is_idle_server_stderr(
+            "error connecting to /tmp/tmux-1000/default (Connection refused)"
+        ));
+        // Server up but empty (older tmux).
+        assert!(is_idle_server_stderr("no sessions"));
+        // Capitalization must not matter.
+        assert!(is_idle_server_stderr("No Server Running on /tmp/x"));
+    }
+
+    #[test]
+    fn idle_stderr_does_not_swallow_real_errors() {
+        assert!(!is_idle_server_stderr("server exited unexpectedly"));
+        assert!(!is_idle_server_stderr("out of memory"));
+        assert!(!is_idle_server_stderr("protocol version mismatch"));
+        assert!(!is_idle_server_stderr(""));
     }
 
     #[test]
