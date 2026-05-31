@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="tmux-otg">
+  <!-- Purpose-built favicon: bold, frame-filling, no app-icon padding, so the
+       terminal split + blue cursor stay legible when scaled down to 16x16.
+       Palette matches the UI: bg #0d1117, edge/divider grays, accent #58a6ff. -->
+  <rect x="2" y="5" width="28" height="22" rx="4"
+        fill="#0d1117" stroke="#c9d1d9" stroke-width="2.5"/>
+  <!-- Vertical split between the two panes. Drawn as a filled rect (not a
+       <line>) so every rasterizer renders it, and bright/thick so it survives
+       the downscale to 16x16 instead of dissolving into the dark body. -->
+  <rect x="14.8" y="6.6" width="2.4" height="18.8" rx="0.4" fill="#c9d1d9"/>
+  <!-- Bold cursor block in the lower-left pane. -->
+  <rect x="5.5" y="17" width="7" height="6" rx="0.7" fill="#58a6ff"/>
+</svg>

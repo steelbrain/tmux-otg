@@ -34,8 +34,11 @@ const CSP: &str = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'
      form-action 'none'; frame-ancestors 'none'";
 
 /// The favicon and iOS home-screen icon, embedded at compile time so the server
-/// stays a single self-contained binary with no asset files to ship. Both are
-/// served same-origin (hence `img-src 'self'` in [`CSP`]).
+/// stays a single self-contained binary with no asset files to ship. All are
+/// served same-origin (hence `img-src 'self'` in [`CSP`]). The favicon is an SVG
+/// (crisp at any size) with a 32x32 PNG fallback for browsers that don't support
+/// SVG favicons.
+const FAVICON_SVG: &[u8] = include_bytes!("../assets/favicon.svg");
 const FAVICON_PNG: &[u8] = include_bytes!("../assets/favicon.png");
 const APPLE_TOUCH_ICON_PNG: &[u8] = include_bytes!("../assets/apple-touch-icon.png");
 
@@ -46,7 +49,8 @@ pub fn router(hub: SharedHub) -> Router {
         .route("/view/{name}", get(view))
         .route("/stream/{name}", get(stream))
         .route("/healthz", get(health))
-        .route("/favicon.png", get(favicon))
+        .route("/favicon.svg", get(favicon_svg))
+        .route("/favicon.png", get(favicon_png))
         .route("/apple-touch-icon.png", get(apple_touch_icon))
         .fallback(fallback)
         .layer(middleware::from_fn(security_headers))
@@ -67,24 +71,29 @@ async fn health() -> &'static str {
     "ok\n"
 }
 
-/// Serves the browser-tab favicon (a small PNG embedded in the binary).
-async fn favicon() -> Response {
-    png_response(FAVICON_PNG)
+/// Serves the browser-tab favicon as SVG — the primary icon, crisp at any size.
+async fn favicon_svg() -> Response {
+    static_asset(FAVICON_SVG, "image/svg+xml")
+}
+
+/// Serves the PNG favicon — a fallback for browsers without SVG-favicon support.
+async fn favicon_png() -> Response {
+    static_asset(FAVICON_PNG, "image/png")
 }
 
 /// Serves the iOS "add to home screen" icon — handy since the whole point is
 /// glancing at sessions from a phone.
 async fn apple_touch_icon() -> Response {
-    png_response(APPLE_TOUCH_ICON_PNG)
+    static_asset(APPLE_TOUCH_ICON_PNG, "image/png")
 }
 
-/// Builds a response for an embedded PNG, overriding the default
+/// Builds a response for an embedded static asset, overriding the default
 /// `application/octet-stream` content type and adding a day-long cache hint so
 /// browsers don't refetch the icon on every page load.
-fn png_response(bytes: &'static [u8]) -> Response {
+fn static_asset(bytes: &'static [u8], content_type: &'static str) -> Response {
     let mut res = bytes.into_response();
     let headers = res.headers_mut();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=86400"));
     res
 }
@@ -207,6 +216,7 @@ fn page(title: &str, body: &str) -> String {
          <meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <title>{title}</title>\n\
+         <link rel=\"icon\" type=\"image/svg+xml\" href=\"/favicon.svg\">\n\
          <link rel=\"icon\" type=\"image/png\" href=\"/favicon.png\">\n\
          <link rel=\"apple-touch-icon\" href=\"/apple-touch-icon.png\">\n\
          <style>{STYLE}</style>\n\
@@ -338,6 +348,7 @@ mod tests {
         // Every page goes through `page()`, so checking one is enough to pin the
         // icon links into the shared <head>.
         let html = render_index(&[]);
+        assert!(html.contains(r#"<link rel="icon" type="image/svg+xml" href="/favicon.svg">"#));
         assert!(html.contains(r#"<link rel="icon" type="image/png" href="/favicon.png">"#));
         assert!(html.contains(r#"<link rel="apple-touch-icon" href="/apple-touch-icon.png">"#));
     }
@@ -453,6 +464,17 @@ mod tests {
                     "{path} must be rejected at the edge",
                 );
             }
+        }
+
+        #[tokio::test]
+        async fn favicon_svg_is_served_as_svg() {
+            let res = get("/favicon.svg").await;
+            assert_eq!(res.status(), StatusCode::OK);
+            assert_eq!(res.headers().get(header::CONTENT_TYPE).unwrap(), "image/svg+xml");
+            let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            let body = std::str::from_utf8(&bytes).unwrap();
+            // Real SVG markup, not octet-stream junk.
+            assert!(body.contains("<svg"));
         }
 
         #[tokio::test]
