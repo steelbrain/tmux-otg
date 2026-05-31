@@ -67,6 +67,14 @@ Documentation-only commits MUST include `[ci skip]` in the title. If no emoji fi
 
 **Pull requests.** PR titles omit the emoji prefix (emojis are for commit messages only).
 
+**Releasing.** A release is cut by pushing a Git tag of the form `vX.Y.Z` (matching `v*.*.*`). That — and only that — triggers `.github/workflows/release.yml`, which builds the macOS/Linux binaries and publishes a GitHub Release with the tarballs and checksums. The `version` in `Cargo.toml` is the source of truth for the release number, so it must always agree with the tag you push (`v0.1.0` ⇔ `version = "0.1.0"`). Order matters — **bump first, tag second**:
+
+1. Edit `version` in `Cargo.toml`, then refresh `Cargo.lock` so its `tmux-otg` entry matches (any `cargo build`/`check` does this — the release build runs `--locked` and fails if they disagree).
+2. Commit that bump on `main` (e.g. `:arrow_up: Bump version to X.Y.Z`).
+3. Only then tag that commit and push it (`git tag vX.Y.Z && git push origin main --tags`).
+
+Never tag a commit whose `Cargo.toml` still carries the previous version: the artifacts are built from the tagged commit, so a stale `Cargo.toml` ships a binary that disagrees with its own release name.
+
 ## Documentation and working style
 
 Every source file already carries module-level doc comments (`//!`) that describe its responsibility and, where relevant, the security rationale. Keep these accurate whenever you change behavior. Prefer small, independently reviewable changes that come with tests rather than large end-to-end rewrites — the security-critical logic in `validation.rs` and `tmux.rs` especially should never change without accompanying test coverage.
