@@ -70,7 +70,7 @@ then open `http://100.x.y.z:8080` from any tailnet device. **This is unauthentic
 
 | Route | Description |
 |-------|-------------|
-| `GET /` | Index page listing the allowlisted (`public-insecure-*`) sessions currently running. |
+| `GET /` | Index page listing the allowlisted (`public-insecure-*`) sessions currently running. If no tmux server is running yet, this returns the normal empty state rather than a 500. |
 | `GET /view/{name}` | Session view page — a small HTML shell that subscribes to the session's SSE stream. Returns 404 if the name is not allowlisted. |
 | `GET /stream/{name}` | Server-Sent Events stream that pushes the latest captured pane text on the configured interval. Returns 404 if the name is not allowlisted. |
 | `GET /healthz` | Liveness check; returns `ok`. |
@@ -152,7 +152,7 @@ cargo test                                             # run the test suite
 cargo build --release                                  # optimized build
 ```
 
-The suite has 23 tests covering configuration parsing, the name allowlist and validation rules, the tmux command wrappers, the per-session capturer/fan-out hub, HTML rendering/escaping, and the HTTP handlers (allowlist gate, health, fallback, and security headers). CI runs formatting, clippy (`-D warnings`), tests, and a release build on every push and pull request.
+The suite currently has 34 tests covering configuration parsing, the name allowlist and validation rules, the tmux command wrappers, the per-session capturer/fan-out hub, HTML rendering/escaping, and the HTTP handlers (allowlist gate, health, fallback, security headers, empty-state handling when no tmux server is running, and the tail view's pinned-only auto-scroll behavior). CI runs formatting, clippy (`-D warnings`), tests, and a release build on every push and pull request.
 
 ## License
 
