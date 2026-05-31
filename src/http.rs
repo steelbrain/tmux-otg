@@ -222,11 +222,25 @@ fn render_view(name: &str) -> String {
 const out = document.getElementById('out');
 const status = document.getElementById('status');
 const url = {stream_url};
+// Each refresh replaces the whole pane snapshot. Only follow the tail when the
+// viewer is already at (or near) the bottom; if they have scrolled up to read
+// scrollback, keep their position instead of snapping them back down. The
+// slack absorbs sub-pixel rounding and lets "almost at the bottom" still pin.
+const PIN_SLACK_PX = 24;
+function atBottom() {{
+  return out.scrollHeight - out.scrollTop - out.clientHeight <= PIN_SLACK_PX;
+}}
 const es = new EventSource(url);
 es.addEventListener('pane', (e) => {{
+  const pinned = atBottom();
+  const prevTop = out.scrollTop;
   out.textContent = JSON.parse(e.data);
   status.textContent = 'live';
-  out.scrollTop = out.scrollHeight;
+  if (pinned) {{
+    out.scrollTop = out.scrollHeight;
+  }} else {{
+    out.scrollTop = prevTop;
+  }}
 }});
 es.addEventListener('gone', (e) => {{
   status.textContent = JSON.parse(e.data);
@@ -291,6 +305,20 @@ mod tests {
         let html = render_view("public-insecure-demo");
         assert!(html.contains(r#"const url = "/stream/public-insecure-demo""#));
         assert!(html.contains("new EventSource(url)"));
+    }
+
+    #[test]
+    fn view_only_autoscrolls_when_pinned_to_bottom() {
+        let html = render_view("public-insecure-demo");
+        // The tail view must not snap to the bottom on every refresh; it only
+        // follows new output when the viewer is already near the bottom, and
+        // otherwise restores their scroll position so reading scrollback (e.g.
+        // on a phone) is not interrupted every refresh.
+        assert!(html.contains("function atBottom()"));
+        assert!(html.contains("const pinned = atBottom();"));
+        assert!(html.contains("out.scrollTop = prevTop;"));
+        // It must still follow the tail when the viewer is pinned to the bottom.
+        assert!(html.contains("out.scrollTop = out.scrollHeight;"));
     }
 
     // --- Handler-level integration tests -----------------------------------
