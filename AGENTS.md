@@ -70,3 +70,5 @@ Documentation-only commits MUST include `[ci skip]` in the title. If no emoji fi
 ## Documentation and working style
 
 Every source file already carries module-level doc comments (`//!`) that describe its responsibility and, where relevant, the security rationale. Keep these accurate whenever you change behavior. Prefer small, independently reviewable changes that come with tests rather than large end-to-end rewrites — the security-critical logic in `validation.rs` and `tmux.rs` especially should never change without accompanying test coverage.
+
+Keep release-facing docs focused on non-obvious behavior, operator-facing usage, and security-relevant details. Do not add README churn for behavior that is already the natural/expected outcome of the documented interface unless it changes user decisions, operating steps, or the threat model.

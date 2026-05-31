@@ -70,7 +70,7 @@ then open `http://100.x.y.z:8080` from any tailnet device. **This is unauthentic
 
 | Route | Description |
 |-------|-------------|
-| `GET /` | Index page listing the allowlisted (`public-insecure-*`) sessions currently running. If no tmux server is running yet, this returns the normal empty state rather than a 500. |
+| `GET /` | Index page listing the allowlisted (`public-insecure-*`) sessions currently running. |
 | `GET /view/{name}` | Session view page — a small HTML shell that subscribes to the session's SSE stream. Returns 404 if the name is not allowlisted. |
 | `GET /stream/{name}` | Server-Sent Events stream that pushes the latest captured pane text on the configured interval. Returns 404 if the name is not allowlisted. |
 | `GET /healthz` | Liveness check; returns `ok`. |
