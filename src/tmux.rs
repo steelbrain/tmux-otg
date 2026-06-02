@@ -101,8 +101,7 @@ pub fn list_allowed_sessions() -> Result<Vec<String>, TmuxError> {
 ///   turns them into `<span>` styling via `textContent`, never `innerHTML`.
 /// * `-S -<n>` starts the capture `n` lines back in the history (scrollback).
 fn capture_args(session: &str, scrollback: u32) -> Vec<String> {
-    let mut args: Vec<String> =
-        vec!["capture-pane".into(), "-p".into(), "-J".into(), "-e".into()];
+    let mut args: Vec<String> = vec!["capture-pane".into(), "-p".into(), "-J".into(), "-e".into()];
     if scrollback > 0 {
         args.push("-S".into());
         args.push(format!("-{scrollback}"));

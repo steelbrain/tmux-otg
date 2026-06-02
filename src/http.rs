@@ -696,7 +696,11 @@ mod tests {
             for path in ["/fonts/jetbrains-mono-light.woff2", "/fonts/jetbrains-mono-bold.woff2"] {
                 let res = get(path).await;
                 assert_eq!(res.status(), StatusCode::OK, "{path}");
-                assert_eq!(res.headers().get(header::CONTENT_TYPE).unwrap(), "font/woff2", "{path}");
+                assert_eq!(
+                    res.headers().get(header::CONTENT_TYPE).unwrap(),
+                    "font/woff2",
+                    "{path}"
+                );
                 // A cache hint so browsers don't refetch the font on every load.
                 assert_eq!(
                     res.headers().get(header::CACHE_CONTROL).unwrap(),

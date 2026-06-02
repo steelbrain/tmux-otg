@@ -26,7 +26,21 @@ cargo build              # debug build
 cargo build --release    # optimized build (release profile strips symbols)
 cargo test               # run unit + handler tests (config, validation, tmux, hub, http)
 cargo clippy             # lint (run with --all-targets to include tests)
+cargo fmt                # auto-format (CI rejects unformatted code — run before committing)
 ```
+
+### CI gates — run these before every commit
+
+`.github/workflows/ci.yml` runs four checks on every push, and a commit that fails any of them turns the build red. **Always run all four locally and confirm they pass before committing** — formatting in particular is easy to forget because `cargo build`/`test` do not enforce it:
+
+```sh
+cargo fmt --all --check                     # Rustfmt — formatting must be clean (NOT auto-applied by build/test)
+cargo clippy --all-targets --all-features   # Clippy — no warnings
+cargo test --all-features                   # all tests pass
+cargo build --release                       # release build succeeds
+```
+
+If `cargo fmt --all --check` reports a diff, run `cargo fmt` to fix it, then re-stage. Treat a clean `cargo fmt --all --check` as a precondition for committing, the same as passing tests.
 
 ## Security model and its invariants
 
