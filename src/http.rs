@@ -27,11 +27,12 @@ pub type SharedHub = Arc<Hub>;
 
 /// Restrictive Content-Security-Policy for the tiny self-contained UI: no
 /// external resources at all, inline `<style>`/`<script>` only, the favicon and
-/// other images from our own origin (`img-src 'self'`), same-origin connections
+/// other images from our own origin (`img-src 'self'`), the embedded JetBrains
+/// Mono webfont from our own origin (`font-src 'self'`), same-origin connections
 /// (for the SSE stream), and no framing (anti-clickjacking).
-const CSP: &str = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; \
-     script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; \
-     form-action 'none'; frame-ancestors 'none'";
+const CSP: &str = "default-src 'none'; img-src 'self'; font-src 'self'; \
+     style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; \
+     base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// The favicon and iOS home-screen icon, embedded at compile time so the server
 /// stays a single self-contained binary with no asset files to ship. All are
@@ -41,6 +42,17 @@ const CSP: &str = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'
 const FAVICON_SVG: &[u8] = include_bytes!("../assets/favicon.svg");
 const FAVICON_PNG: &[u8] = include_bytes!("../assets/favicon.png");
 const APPLE_TOUCH_ICON_PNG: &[u8] = include_bytes!("../assets/apple-touch-icon.png");
+
+/// JetBrains Mono (OFL-1.1, see `assets/fonts/OFL.txt`), embedded so the pane is
+/// rendered in a true terminal typeface on every client — including phones that
+/// don't have it installed — while the server stays a single self-contained
+/// binary. Served same-origin (hence `font-src 'self'` in [`CSP`]). Only the
+/// Light (base) and Bold (for SGR-bold runs) weights are shipped; italic SGR
+/// runs use the browser's synthesized slant, which keeps the payload to two
+/// woff2 files. Light is deliberately the base weight — Regular reads too heavy
+/// for a wall of pane text.
+const FONT_LIGHT_WOFF2: &[u8] = include_bytes!("../assets/fonts/jetbrains-mono-light.woff2");
+const FONT_BOLD_WOFF2: &[u8] = include_bytes!("../assets/fonts/jetbrains-mono-bold.woff2");
 
 /// Builds the application router with all routes wired to `hub`.
 pub fn router(hub: SharedHub) -> Router {
@@ -52,6 +64,8 @@ pub fn router(hub: SharedHub) -> Router {
         .route("/favicon.svg", get(favicon_svg))
         .route("/favicon.png", get(favicon_png))
         .route("/apple-touch-icon.png", get(apple_touch_icon))
+        .route("/fonts/jetbrains-mono-light.woff2", get(font_light))
+        .route("/fonts/jetbrains-mono-bold.woff2", get(font_bold))
         .fallback(fallback)
         .layer(middleware::from_fn(security_headers))
         .with_state(hub)
@@ -85,6 +99,16 @@ async fn favicon_png() -> Response {
 /// glancing at sessions from a phone.
 async fn apple_touch_icon() -> Response {
     static_asset(APPLE_TOUCH_ICON_PNG, "image/png")
+}
+
+/// Serves the embedded JetBrains Mono Light webfont (same-origin).
+async fn font_light() -> Response {
+    static_asset(FONT_LIGHT_WOFF2, "font/woff2")
+}
+
+/// Serves the embedded JetBrains Mono Bold webfont (same-origin).
+async fn font_bold() -> Response {
+    static_asset(FONT_BOLD_WOFF2, "font/woff2")
 }
 
 /// Builds a response for an embedded static asset, overriding the default
@@ -190,9 +214,11 @@ fn internal_error(detail: &str) -> Response {
 // --- Templates -------------------------------------------------------------
 
 const STYLE: &str = r#"
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 300; font-display: swap; src: url('/fonts/jetbrains-mono-light.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/jetbrains-mono-bold.woff2') format('woff2'); }
 :root { color-scheme: dark; }
 * { box-sizing: border-box; }
-body { margin: 0; padding: 1.5rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #0d1117; color: #c9d1d9; line-height: 1.5; }
+body { margin: 0; padding: 1.5rem; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 300; background: #0d1117; color: #c9d1d9; line-height: 1.5; }
 a { color: #58a6ff; text-decoration: none; }
 a:hover { text-decoration: underline; }
 h1 { font-size: 1.2rem; margin: 0; }
@@ -203,7 +229,20 @@ li { margin: 0.4rem 0; }
 li a { display: inline-block; padding: 0.5rem 0.75rem; background: #161b22; border: 1px solid #30363d; border-radius: 6px; }
 .topbar { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
 #status { font-size: 0.8rem; color: #8b949e; }
-pre { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; overflow: auto; white-space: pre-wrap; word-break: break-word; max-height: 80vh; margin: 0; }
+/* Comfortable (not cramped) row spacing, while keeping each coloured run's
+   background contiguous between rows. The body's line-height adds half-leading
+   that an inline <span>'s background does not paint, which would show the page
+   background leaking through as a horizontal seam between coloured rows. Rather
+   than crush the rows together, we keep an airy line-height here and extend every
+   span's background into that leading with vertical padding + box-decoration-break
+   (see `#out span`), so the gap closes without feeling like a terminal squashed
+   to zero spacing. */
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; overflow: auto; white-space: pre-wrap; word-break: break-word; max-height: 80vh; margin: 0; line-height: 1.4; }
+/* `padding-block` grows each run's background to fill the line's leading; the
+   `clone` makes it apply to every fragment when a run soft-wraps. The value is
+   ~half the leading, so adjacent rows' backgrounds meet (a hair of overlap is
+   invisible for solid colours, but prevents any seam). */
+#out span { padding-block: 0.2em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 "#;
 
 /// Minimal HTML page wrapper. `body` is assumed to be already-safe markup;
@@ -501,6 +540,29 @@ mod tests {
         assert!(html.contains("const ANSI_PALETTE"));
     }
 
+    #[test]
+    fn pane_keeps_colour_bands_contiguous_without_cramping() {
+        // The seam between coloured rows is closed not by crushing line-height to
+        // zero leading, but by keeping an airy pane line-height and extending each
+        // span's background into the leading with padding + box-decoration-break.
+        // Pin both halves so a regression to either approach is caught.
+        assert!(STYLE.contains("#out span"));
+        assert!(STYLE.contains("padding-block: 0.2em"));
+        assert!(STYLE.contains("box-decoration-break: clone"));
+    }
+
+    #[test]
+    fn style_embeds_and_prefers_light_jetbrains_mono() {
+        // The UI ships JetBrains Mono as a same-origin webfont and prefers it
+        // over the system monospace stack (which stays as the fallback). The base
+        // weight is Light (300) — Regular reads too heavy for a wall of text.
+        assert!(STYLE.contains("@font-face"));
+        assert!(STYLE.contains("src: url('/fonts/jetbrains-mono-light.woff2') format('woff2')"));
+        assert!(STYLE.contains("src: url('/fonts/jetbrains-mono-bold.woff2') format('woff2')"));
+        assert!(STYLE.contains("font-family: 'JetBrains Mono', ui-monospace"));
+        assert!(STYLE.contains("font-weight: 300"));
+    }
+
     // --- Handler-level integration tests -----------------------------------
     //
     // These drive the router via `oneshot` to lock in the security-relevant
@@ -569,6 +631,9 @@ mod tests {
             // The favicon is served from our own origin, so images are confined
             // to `'self'` — never widened to external hosts or `data:`.
             assert!(CSP.contains("img-src 'self'"));
+            // The JetBrains Mono webfont is embedded and served same-origin, so
+            // fonts are likewise confined to `'self'` — never an external host.
+            assert!(CSP.contains("font-src 'self'"));
             assert_eq!(headers.get(header::X_CONTENT_TYPE_OPTIONS).unwrap(), "nosniff");
             assert_eq!(headers.get(header::REFERRER_POLICY).unwrap(), "no-referrer");
         }
@@ -624,6 +689,24 @@ mod tests {
             assert_eq!(res.headers().get(header::CONTENT_TYPE).unwrap(), "image/png");
             let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
             assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+        }
+
+        #[tokio::test]
+        async fn fonts_are_served_as_woff2() {
+            for path in ["/fonts/jetbrains-mono-light.woff2", "/fonts/jetbrains-mono-bold.woff2"] {
+                let res = get(path).await;
+                assert_eq!(res.status(), StatusCode::OK, "{path}");
+                assert_eq!(res.headers().get(header::CONTENT_TYPE).unwrap(), "font/woff2", "{path}");
+                // A cache hint so browsers don't refetch the font on every load.
+                assert_eq!(
+                    res.headers().get(header::CACHE_CONTROL).unwrap(),
+                    "public, max-age=86400",
+                    "{path}",
+                );
+                let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+                // woff2 magic number — proves we served the real embedded font.
+                assert_eq!(&bytes[..4], b"wOF2", "{path}");
+            }
         }
     }
 }
