@@ -254,6 +254,10 @@ fn render_view(name: &str) -> String {
     // quoted JS string (the name is already restricted to a safe charset).
     let stream_url =
         serde_json::to_string(&format!("/stream/{name}")).unwrap_or_else(|_| "\"\"".to_string());
+    // `ANSI_JS` and `VIEW_WIRING` are injected as format *arguments*, so their
+    // (many) `{`/`}` are not re-scanned by `format!` — only the small outer
+    // template below needs placeholders. Keep them in separate consts for that
+    // reason, not just readability.
     let body = format!(
         r#"<div class="topbar">
   <h1>{safe}</h1>
@@ -265,35 +269,142 @@ fn render_view(name: &str) -> String {
 const out = document.getElementById('out');
 const status = document.getElementById('status');
 const url = {stream_url};
-// Each refresh replaces the whole pane snapshot. Only follow the tail when the
-// viewer is already at (or near) the bottom; if they have scrolled up to read
-// scrollback, keep their position instead of snapping them back down. The
-// slack absorbs sub-pixel rounding and lets "almost at the bottom" still pin.
-const PIN_SLACK_PX = 24;
-function atBottom() {{
-  return out.scrollHeight - out.scrollTop - out.clientHeight <= PIN_SLACK_PX;
-}}
-const es = new EventSource(url);
-es.addEventListener('pane', (e) => {{
-  const pinned = atBottom();
-  const prevTop = out.scrollTop;
-  out.textContent = JSON.parse(e.data);
-  status.textContent = 'live';
-  if (pinned) {{
-    out.scrollTop = out.scrollHeight;
-  }} else {{
-    out.scrollTop = prevTop;
-  }}
-}});
-es.addEventListener('gone', (e) => {{
-  status.textContent = JSON.parse(e.data);
-  es.close();
-}});
-es.onerror = () => {{ status.textContent = 'disconnected — retrying…'; }};
+{ansi}
+{wiring}
 </script>"#,
+        ansi = ANSI_JS,
+        wiring = VIEW_WIRING,
     );
     page(&format!("tmux-otg — {name}"), &body)
 }
+
+/// Client-side ANSI/SGR renderer. The pane is captured with `tmux capture-pane
+/// -e`, so each snapshot may carry SGR escape sequences (`\x1b[…m`) for colour
+/// and text attributes. This parses them and builds the pane out of `<span>`
+/// elements whose `textContent` is set directly — never `innerHTML` — so
+/// coloured output can never become an HTML-injection vector. The only styles
+/// applied are colours derived from numeric SGR codes (a fixed 16-colour
+/// palette, the xterm-256 cube, or 24-bit rgb), so no pane text is ever
+/// interpreted as CSS either. Inline styling is applied through the CSSOM
+/// (`span.style.…`), which is not governed by `style-src` at all (that covers
+/// `<style>`/`style=` attributes/`<link>`) — so no CSP change is required.
+const ANSI_JS: &str = r#"const ANSI_PALETTE = [
+  '#000000','#cd3131','#0dbc79','#e5e510','#2472c8','#bc3fbc','#11a8cd','#e5e5e5',
+  '#666666','#f14c4c','#23d18b','#f5f543','#3b8eea','#d670d6','#29b8db','#ffffff'
+];
+const ANSI_DEFAULT_FG = '#c9d1d9';
+const ANSI_DEFAULT_BG = '#161b22';
+function ansiColor256(n) {
+  if (n < 16) return ANSI_PALETTE[n];
+  if (n < 232) {
+    n -= 16;
+    const f = (x) => x === 0 ? 0 : 55 + x * 40;
+    return 'rgb(' + f(Math.floor(n / 36)) + ',' + f(Math.floor((n % 36) / 6)) + ',' + f(n % 6) + ')';
+  }
+  const v = 8 + (n - 232) * 10;
+  return 'rgb(' + v + ',' + v + ',' + v + ')';
+}
+function ansiFreshState() {
+  return { fg: null, bg: null, bold: false, dim: false, italic: false, underline: false, inverse: false };
+}
+// 38/48 introduce an extended colour: `5;n` (256-colour) or `2;r;g;b` (24-bit).
+// Returns the resolved colour and the index of the last code it consumed.
+function ansiReadExtended(codes, i) {
+  if (codes[i + 1] === 5 && codes.length > i + 2) {
+    return { color: ansiColor256(codes[i + 2] & 255), next: i + 2 };
+  }
+  if (codes[i + 1] === 2 && codes.length > i + 4) {
+    const r = codes[i + 2] & 255, g = codes[i + 3] & 255, b = codes[i + 4] & 255;
+    return { color: 'rgb(' + r + ',' + g + ',' + b + ')', next: i + 4 };
+  }
+  return null;
+}
+function ansiApplySgr(state, params) {
+  const codes = (params === '' ? '0' : params).split(';').map((x) => x === '' ? 0 : parseInt(x, 10));
+  const s = Object.assign({}, state);
+  for (let i = 0; i < codes.length; i++) {
+    const c = codes[i];
+    if (c === 0) Object.assign(s, ansiFreshState());
+    else if (c === 1) s.bold = true;
+    else if (c === 2) s.dim = true;
+    else if (c === 3) s.italic = true;
+    else if (c === 4) s.underline = true;
+    else if (c === 7) s.inverse = true;
+    else if (c === 22) { s.bold = false; s.dim = false; }
+    else if (c === 23) s.italic = false;
+    else if (c === 24) s.underline = false;
+    else if (c === 27) s.inverse = false;
+    else if (c >= 30 && c <= 37) s.fg = ANSI_PALETTE[c - 30];
+    else if (c === 38) { const r = ansiReadExtended(codes, i); if (r) { s.fg = r.color; i = r.next; } }
+    else if (c === 39) s.fg = null;
+    else if (c >= 40 && c <= 47) s.bg = ANSI_PALETTE[c - 40];
+    else if (c === 48) { const r = ansiReadExtended(codes, i); if (r) { s.bg = r.color; i = r.next; } }
+    else if (c === 49) s.bg = null;
+    else if (c >= 90 && c <= 97) s.fg = ANSI_PALETTE[8 + c - 90];
+    else if (c >= 100 && c <= 107) s.bg = ANSI_PALETTE[8 + c - 100];
+  }
+  return s;
+}
+function ansiApplyState(span, s) {
+  let fg = s.fg, bg = s.bg;
+  if (s.inverse) { const f = fg || ANSI_DEFAULT_FG, b = bg || ANSI_DEFAULT_BG; fg = b; bg = f; }
+  if (fg) span.style.color = fg;
+  if (bg) span.style.backgroundColor = bg;
+  if (s.bold) span.style.fontWeight = 'bold';
+  if (s.dim) span.style.opacity = '0.75';
+  if (s.italic) span.style.fontStyle = 'italic';
+  if (s.underline) span.style.textDecoration = 'underline';
+}
+// Build a DocumentFragment of styled spans. Text always reaches the DOM via
+// textContent; SGR sequences set styling, and any other control sequence (CSI
+// or OSC) is dropped rather than rendered as garbage.
+function ansiToFragment(text) {
+  const frag = document.createDocumentFragment();
+  let state = ansiFreshState();
+  const re = /\x1b\[([0-9;?]*)([A-Za-z])|\x1b[\]PX^_].*?(?:\x07|\x1b\\)/g;
+  let last = 0, m;
+  const emit = (str) => {
+    if (!str) return;
+    const span = document.createElement('span');
+    span.textContent = str;
+    ansiApplyState(span, state);
+    frag.appendChild(span);
+  };
+  while ((m = re.exec(text)) !== null) {
+    emit(text.slice(last, m.index));
+    last = re.lastIndex;
+    if (m[2] === 'm') state = ansiApplySgr(state, m[1] || '');
+  }
+  emit(text.slice(last));
+  return frag;
+}"#;
+
+/// The SSE wiring for the view page. Kept as a const (not an inline `format!`
+/// template) so its braces need no doubling. Replaces the pane snapshot on every
+/// `pane` event, following the tail only when the viewer is already pinned to
+/// the bottom so reading scrollback (e.g. on a phone) is not interrupted.
+const VIEW_WIRING: &str = r#"// The slack absorbs sub-pixel rounding and lets "almost at the bottom" still pin.
+const PIN_SLACK_PX = 24;
+function atBottom() {
+  return out.scrollHeight - out.scrollTop - out.clientHeight <= PIN_SLACK_PX;
+}
+const es = new EventSource(url);
+es.addEventListener('pane', (e) => {
+  const pinned = atBottom();
+  const prevTop = out.scrollTop;
+  out.replaceChildren(ansiToFragment(JSON.parse(e.data)));
+  status.textContent = 'live';
+  if (pinned) {
+    out.scrollTop = out.scrollHeight;
+  } else {
+    out.scrollTop = prevTop;
+  }
+});
+es.addEventListener('gone', (e) => {
+  status.textContent = JSON.parse(e.data);
+  es.close();
+});
+es.onerror = () => { status.textContent = 'disconnected — retrying…'; };"#;
 
 fn render_error(heading: &str, detail: &str) -> String {
     let body = format!(
@@ -372,6 +483,22 @@ mod tests {
         assert!(html.contains("out.scrollTop = prevTop;"));
         // It must still follow the tail when the viewer is pinned to the bottom.
         assert!(html.contains("out.scrollTop = out.scrollHeight;"));
+    }
+
+    #[test]
+    fn view_renders_ansi_colour_without_html_injection() {
+        let html = render_view("public-insecure-demo");
+        // The pane is parsed for ANSI/SGR escapes and rebuilt from styled spans.
+        assert!(html.contains("ansiToFragment"));
+        assert!(html.contains("out.replaceChildren(ansiToFragment(JSON.parse(e.data)))"));
+        // Crucially, pane text only ever reaches the DOM via `textContent` on a
+        // created element — never `innerHTML` — so coloured output cannot become
+        // an HTML-injection vector. Colours come from a numeric palette, so no
+        // pane text is interpreted as CSS either. Pin both halves of that.
+        assert!(html.contains("document.createElement('span')"));
+        assert!(html.contains("span.textContent = str;"));
+        assert!(!html.contains("innerHTML"));
+        assert!(html.contains("const ANSI_PALETTE"));
     }
 
     // --- Handler-level integration tests -----------------------------------

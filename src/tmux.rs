@@ -88,11 +88,37 @@ pub fn list_allowed_sessions() -> Result<Vec<String>, TmuxError> {
     Ok(validation::filter_allowed(stdout.lines()))
 }
 
+/// Builds the argument vector for `tmux capture-pane`.
+///
+/// Factored out (and pure) so the security-relevant shape of the invocation can
+/// be unit-tested without spawning tmux: the session name is always the *value*
+/// of `-t` (never parsed as a flag), and no argument is ever a shell string.
+///
+/// * `-p` writes the capture to stdout, `-J` rejoins wrapped lines.
+/// * `-e` preserves the pane's SGR escape sequences so the browser can render
+///   colour and text attributes. These escapes are not a security concern: they
+///   round-trip through the JSON encoder (see `hub::encode`) and the client
+///   turns them into `<span>` styling via `textContent`, never `innerHTML`.
+/// * `-S -<n>` starts the capture `n` lines back in the history (scrollback).
+fn capture_args(session: &str, scrollback: u32) -> Vec<String> {
+    let mut args: Vec<String> =
+        vec!["capture-pane".into(), "-p".into(), "-J".into(), "-e".into()];
+    if scrollback > 0 {
+        args.push("-S".into());
+        args.push(format!("-{scrollback}"));
+    }
+    // The session name is the *value* of `-t`, so it is never parsed as a flag.
+    args.push("-t".into());
+    args.push(session.to_string());
+    args
+}
+
 /// Captures the current contents of the active pane of `session`.
 ///
 /// `scrollback` requests that many extra history lines above the visible pane
-/// (0 = visible pane only). The returned string preserves newlines. Wrapped
-/// lines are rejoined (`-J`) for readability.
+/// (0 = visible pane only). The returned string preserves newlines and the
+/// pane's colour/attribute escape sequences. Wrapped lines are rejoined (`-J`)
+/// for readability.
 pub fn capture_pane(session: &str, scrollback: u32) -> Result<String, TmuxError> {
     // Belt-and-suspenders: never shell out for a name that isn't allowlisted,
     // even though callers are expected to have already checked.
@@ -101,15 +127,7 @@ pub fn capture_pane(session: &str, scrollback: u32) -> Result<String, TmuxError>
     }
 
     let mut cmd = Command::new("tmux");
-    cmd.args(["capture-pane", "-p", "-J"]);
-    if scrollback > 0 {
-        // `-S -<n>` starts the capture n lines back in the history.
-        cmd.arg("-S");
-        cmd.arg(format!("-{scrollback}"));
-    }
-    // The session name is the *value* of `-t`, so it is never parsed as a flag.
-    cmd.arg("-t");
-    cmd.arg(session);
+    cmd.args(capture_args(session, scrollback));
 
     let output = cmd.output().map_err(TmuxError::Spawn)?;
     if !output.status.success() {
@@ -124,6 +142,34 @@ pub fn capture_pane(session: &str, scrollback: u32) -> Result<String, TmuxError>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_args_request_colour_and_pass_name_as_value_of_t() {
+        let args = capture_args("public-insecure-demo", 0);
+        // Colour/attribute escapes (`-e`) plus stdout (`-p`) and rejoin (`-J`).
+        assert!(args.contains(&"-e".to_string()), "must capture with colour escapes");
+        assert!(args.contains(&"-p".to_string()));
+        assert!(args.contains(&"-J".to_string()));
+        // The name must appear only as the value immediately after `-t`, never
+        // as a bare argument that tmux could parse as a flag.
+        let t = args.iter().position(|a| a == "-t").expect("`-t` present");
+        assert_eq!(args.get(t + 1).map(String::as_str), Some("public-insecure-demo"));
+        assert_eq!(
+            args.iter().filter(|a| a.as_str() == "public-insecure-demo").count(),
+            1,
+            "the name appears exactly once, as the `-t` value",
+        );
+    }
+
+    #[test]
+    fn capture_args_omit_scrollback_when_zero_and_include_it_otherwise() {
+        let none = capture_args("public-insecure-demo", 0);
+        assert!(!none.contains(&"-S".to_string()), "no scrollback flag at 0");
+
+        let some = capture_args("public-insecure-demo", 500);
+        let s = some.iter().position(|a| a == "-S").expect("`-S` present");
+        assert_eq!(some.get(s + 1).map(String::as_str), Some("-500"));
+    }
 
     #[test]
     fn capture_rejects_non_allowlisted_names_without_spawning() {
