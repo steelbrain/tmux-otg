@@ -422,28 +422,89 @@ function ansiToFragment(text) {
 /// template) so its braces need no doubling. Replaces the pane snapshot on every
 /// `pane` event, following the tail only when the viewer is already pinned to
 /// the bottom so reading scrollback (e.g. on a phone) is not interrupted.
+///
+/// Press-and-hold to freeze: while a pointer is held down on the pane (a finger
+/// tap-and-hold on a phone, a click-and-hold on a desktop), incoming snapshots
+/// are buffered instead of painted, so the output holds still long enough to
+/// read. Releasing — anywhere, hence the `window` listeners — resumes and paints
+/// the most recent buffered snapshot. Pointer Events unify mouse and touch into
+/// one code path.
+///
+/// The freeze indicator is *overlaid* on the status line without overwriting the
+/// real connection state (`connStatus`), so releasing reveals the true status
+/// (live / disconnected / gone) instead of unconditionally guessing "live". Only
+/// the primary button/touch freezes (a right- or middle-click's `pointerup` is
+/// easily swallowed by the context menu, which would otherwise stick), and a
+/// window `blur` thaws in case a held button's release is never delivered (e.g.
+/// tabbing away mid-hold).
 const VIEW_WIRING: &str = r#"// The slack absorbs sub-pixel rounding and lets "almost at the bottom" still pin.
 const PIN_SLACK_PX = 24;
 function atBottom() {
   return out.scrollHeight - out.scrollTop - out.clientHeight <= PIN_SLACK_PX;
 }
-const es = new EventSource(url);
-es.addEventListener('pane', (e) => {
+// The real connection state, shown whenever the pane is not frozen. Freezing
+// overlays a hint on top without clobbering this, so a release reveals whatever
+// is actually true now rather than assuming the stream is still live.
+let connStatus = 'connecting…';
+let frozen = false;
+let pending = null;
+function showStatus() {
+  status.textContent = frozen ? 'frozen — release to resume' : connStatus;
+}
+function render(data) {
   const pinned = atBottom();
   const prevTop = out.scrollTop;
-  out.replaceChildren(ansiToFragment(JSON.parse(e.data)));
-  status.textContent = 'live';
+  out.replaceChildren(ansiToFragment(data));
+  connStatus = 'live';
+  showStatus();
   if (pinned) {
     out.scrollTop = out.scrollHeight;
   } else {
     out.scrollTop = prevTop;
   }
+}
+// Press-and-hold freezes updates; the newest snapshot that arrives while frozen
+// is buffered in `pending` and painted on release.
+function freeze(e) {
+  // Only the primary button/touch freezes — a right/middle click's pointerup is
+  // easily missed (context menu), which would leave the pane stuck frozen.
+  if (frozen || e.button !== 0) return;
+  frozen = true;
+  showStatus();
+}
+function thaw() {
+  if (!frozen) return;
+  frozen = false;
+  if (pending !== null) {
+    const data = pending;
+    pending = null;
+    render(data);
+  } else {
+    showStatus();
+  }
+}
+out.addEventListener('pointerdown', freeze);
+// Release/cancel anywhere (the pointer may have left the pane) resumes updates;
+// blur covers a button held while the tab loses focus, whose up is never seen.
+window.addEventListener('pointerup', thaw);
+window.addEventListener('pointercancel', thaw);
+window.addEventListener('blur', thaw);
+const es = new EventSource(url);
+es.addEventListener('pane', (e) => {
+  const data = JSON.parse(e.data);
+  if (frozen) { pending = data; return; }
+  render(data);
 });
 es.addEventListener('gone', (e) => {
-  status.textContent = JSON.parse(e.data);
+  // The stream is over: drop the freeze and any buffered frame so a later
+  // release can't relabel a dead session 'live' or repaint a stale snapshot.
+  frozen = false;
+  pending = null;
+  connStatus = JSON.parse(e.data);
+  showStatus();
   es.close();
 });
-es.onerror = () => { status.textContent = 'disconnected — retrying…'; };"#;
+es.onerror = () => { connStatus = 'disconnected — retrying…'; showStatus(); };"#;
 
 fn render_error(heading: &str, detail: &str) -> String {
     let body = format!(
@@ -525,11 +586,55 @@ mod tests {
     }
 
     #[test]
+    fn view_freezes_updates_while_a_pointer_is_held() {
+        let html = render_view("public-insecure-demo");
+        // Press-and-hold (tap-and-hold on a phone, click-and-hold on a desktop)
+        // must freeze the pane so it can be read. The pointer-down handler sets
+        // the freeze, and release/cancel — listened for on `window` so a pointer
+        // that wandered off the pane still resumes — clears it.
+        assert!(html.contains("out.addEventListener('pointerdown', freeze)"));
+        assert!(html.contains("window.addEventListener('pointerup', thaw)"));
+        assert!(html.contains("window.addEventListener('pointercancel', thaw)"));
+        // While frozen, snapshots must be buffered (not painted), and the latest
+        // one is painted on release — never dropped, so resuming shows current
+        // output rather than a stale frame.
+        assert!(html.contains("if (frozen) { pending = data; return; }"));
+        assert!(html.contains("function thaw()"));
+        assert!(html.contains("pending = null;"));
+        // Only the primary button/touch freezes: a right/middle click's pointerup
+        // is easily swallowed by the context menu, which would stick the freeze.
+        assert!(html.contains("if (frozen || e.button !== 0) return;"));
+        // A held button whose release is never delivered (tabbing away mid-hold)
+        // must still resume, so blur is a safety thaw.
+        assert!(html.contains("window.addEventListener('blur', thaw)"));
+    }
+
+    #[test]
+    fn freeze_indicator_does_not_clobber_connection_state() {
+        let html = render_view("public-insecure-demo");
+        // The freeze hint is overlaid on the status line without overwriting the
+        // real connection state, so releasing reveals what is actually true now
+        // (live / disconnected / gone) instead of unconditionally showing 'live'.
+        assert!(html.contains("let connStatus"));
+        assert!(
+            html.contains(
+                "status.textContent = frozen ? 'frozen — release to resume' : connStatus;"
+            )
+        );
+        // A `gone` (or error) that lands while frozen must drop the freeze and any
+        // buffered frame, so a later release can't relabel a dead stream 'live' or
+        // repaint a stale snapshot over the terminal message.
+        assert!(html.contains("connStatus = JSON.parse(e.data);"));
+        assert!(html.contains("connStatus = 'disconnected — retrying…';"));
+    }
+
+    #[test]
     fn view_renders_ansi_colour_without_html_injection() {
         let html = render_view("public-insecure-demo");
         // The pane is parsed for ANSI/SGR escapes and rebuilt from styled spans.
         assert!(html.contains("ansiToFragment"));
-        assert!(html.contains("out.replaceChildren(ansiToFragment(JSON.parse(e.data)))"));
+        assert!(html.contains("out.replaceChildren(ansiToFragment(data))"));
+        assert!(html.contains("const data = JSON.parse(e.data);"));
         // Crucially, pane text only ever reaches the DOM via `textContent` on a
         // created element — never `innerHTML` — so coloured output cannot become
         // an HTML-injection vector. Colours come from a numeric palette, so no
